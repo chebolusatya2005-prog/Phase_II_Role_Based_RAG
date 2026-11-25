@@ -1,5 +1,6 @@
+
 import logging
-logger=logging.getLogger(__name__)
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -7,6 +8,10 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.rag_pipeline import answer_question
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("uvicorn.error")
 
 
 app = FastAPI(
@@ -56,7 +61,13 @@ def current_user(
             detail="Bearer token is required."
         )
 
-    return get_current_user(credentials.credentials)
+    logger.info("Authentication check started")
+
+    user = get_current_user(credentials.credentials)
+
+    logger.info("Authentication successful. Role: %s", user["role"])
+
+    return user
 
 
 @app.post("/chat")
@@ -64,24 +75,32 @@ def chat(
     request: ChatRequest,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
-    # 1. Verify authentication
+    logger.info("POST /chat received")
+
     if credentials is None:
+        logger.warning("Chat request rejected: Bearer token missing")
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Bearer token is required."
         )
 
-    # 2. Get authenticated user and verified role
+    logger.info("Chat authentication started")
+
     user = get_current_user(credentials.credentials)
     role = user["role"]
 
-    # 3. Generate role-specific RAG answer
+    logger.info("Chat authentication successful. Role: %s", role)
+    logger.info("RAG pipeline execution started")
+
     try:
         answer = answer_question(
             question=request.question,
             role=role,
             access_token=credentials.credentials
         )
+
+        logger.info("RAG pipeline completed successfully")
 
         return {
             "user_id": user["user_id"],
@@ -91,6 +110,8 @@ def chat(
         }
 
     except (ValueError, FileNotFoundError) as error:
+        logger.exception("RAG validation failed")
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error)
@@ -98,6 +119,7 @@ def chat(
 
     except Exception:
         logger.exception("RAG chat generation failed")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while generating the answer."
