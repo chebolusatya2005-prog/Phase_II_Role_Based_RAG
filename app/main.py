@@ -1,6 +1,7 @@
 import logging
 logger=logging.getLogger(__name__)
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,18 @@ app = FastAPI(
     title="Role-Based RAG API",
     description="Secure Student, Trainer and Admin RAG Backend",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://ais-dev-dxs3mqxkzscr4aepkuoh6v-962756732360.asia-southeast1.run.app",
+        "https://ais-pre-dxs3mqxkzscr4aepkuoh6v-962756732360.asia-southeast1.run.app",
+        "http://localhost:3000",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 bearer_scheme = HTTPBearer(auto_error=False)
