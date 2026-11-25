@@ -21,6 +21,7 @@ app.add_middleware(
         "https://ais-dev-dxs3mqxkzscr4aepkuoh6v-962756732360.asia-southeast1.run.app",
         "https://ais-pre-dxs3mqxkzscr4aepkuoh6v-962756732360.asia-southeast1.run.app",
         "http://localhost:3000",
+        "https://ai-student-learning-career-success-platform.ai.studio",
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
@@ -74,13 +75,14 @@ def chat(
     user = get_current_user(credentials.credentials)
     role = user["role"]
 
-        # 3. Generate role-specific RAG answer
+    # 3. Generate role-specific RAG answer
     try:
         answer = answer_question(
-    question=request.question,
-    role=role,
-    access_token=credentials.credentials
-)
+            question=request.question,
+            role=role,
+            access_token=credentials.credentials
+        )
+
         return {
             "user_id": user["user_id"],
             "role": role,
