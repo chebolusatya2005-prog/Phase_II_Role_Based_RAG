@@ -1,6 +1,9 @@
 
-from supabase import create_client
+import logging
+import time
+from functools import lru_cache
 
+from supabase import create_client
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,7 +17,29 @@ from app.config import (
 )
 
 
+# Logging configuration
+logger = logging.getLogger(__name__)
+
 MATCH_COUNT = 4
+
+
+# Load the embedding model only once and reuse it.
+@lru_cache(maxsize=1)
+def get_embeddings():
+    logger.info("Loading HuggingFace embedding model: %s", EMBEDDING_MODEL)
+
+    start_time = time.perf_counter()
+
+    model = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL
+    )
+
+    logger.info(
+        "Embedding model loaded in %.2f seconds",
+        time.perf_counter() - start_time
+    )
+
+    return model
 
 
 def answer_question(
@@ -22,13 +47,16 @@ def answer_question(
     role: str,
     access_token: str
 ):
-    """Retrieve role-specific documents from Supabase and generate an answer."""
+    """Retrieve role-specific documents and generate an answer."""
 
-    # 1. Validate role
+    # 1. Validate inputs
     role = role.lower().strip()
 
     if role not in ["student", "trainer", "admin"]:
         raise ValueError("Invalid user role")
+
+    if not question or not question.strip():
+        raise ValueError("Question cannot be empty")
 
     if not access_token:
         raise ValueError("User access token is required")
@@ -39,40 +67,69 @@ def answer_question(
     if not GROQ_API_KEY:
         raise ValueError("Groq API key is missing")
 
-    # 2. Create a Supabase client for this authenticated request
+    logger.info("Starting RAG request for role: %s", role)
+
+    # 2. Create authenticated Supabase client
+    stage_start = time.perf_counter()
+
     supabase = create_client(
         SUPABASE_URL,
         SUPABASE_KEY
     )
 
-    # Attach the logged-in user's JWT.
-    # Supabase RLS will control which documents can be retrieved.
     supabase.postgrest.auth(access_token)
 
-    # 3. Initialize embedding model
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL
+    logger.info(
+        "Supabase client initialized in %.2f seconds",
+        time.perf_counter() - stage_start
     )
 
-    # 4. Convert user question into an embedding
-    query_embedding = embeddings.embed_query(question)
+    # 3. Generate question embedding
+    try:
+        stage_start = time.perf_counter()
 
-    # 5. Search relevant documents in Supabase pgvector
-    result = supabase.rpc(
-        "match_rag_documents",
-        {
-            "query_embedding": query_embedding,
-            "match_count": MATCH_COUNT,
-            "filter_role": role
-        }
-    ).execute()
+        embeddings = get_embeddings()
 
-    retrieved_docs = result.data
+        query_embedding = embeddings.embed_query(question)
+
+        logger.info(
+            "Question embedding generated in %.2f seconds",
+            time.perf_counter() - stage_start
+        )
+
+    except Exception:
+        logger.exception("Question embedding generation failed")
+        raise
+
+    # 4. Retrieve role-specific documents from Supabase
+    try:
+        stage_start = time.perf_counter()
+
+        result = supabase.rpc(
+            "match_rag_documents",
+            {
+                "query_embedding": query_embedding,
+                "match_count": MATCH_COUNT,
+                "filter_role": role
+            }
+        ).execute()
+
+        retrieved_docs = result.data or []
+
+        logger.info(
+            "Supabase retrieval completed in %.2f seconds. Documents: %d",
+            time.perf_counter() - stage_start,
+            len(retrieved_docs)
+        )
+
+    except Exception:
+        logger.exception("Supabase document retrieval failed")
+        raise
 
     if not retrieved_docs:
         return "I could not find relevant information in your knowledge base."
 
-    # 6. Prepare context from retrieved documents
+    # 5. Prepare retrieved context
     context_parts = []
 
     for document in retrieved_docs:
@@ -86,7 +143,7 @@ def answer_question(
     if not context:
         return "I could not find relevant information in your knowledge base."
 
-    # 7. Create prompt
+    # 6. Create role-based prompt
     prompt = ChatPromptTemplate.from_template("""
     You are a role-based AI career assistant.
 
@@ -110,20 +167,36 @@ def answer_question(
     Answer:
     """)
 
-    # 8. Initialize Groq LLM
+    # 7. Initialize Groq LLM with a request timeout
     llm = ChatGroq(
         groq_api_key=GROQ_API_KEY,
         model=LLM_MODEL,
-        temperature=0
+        temperature=0,
+        timeout=30,
+        max_retries=1
     )
 
-    # 9. Generate answer
-    chain = prompt | llm
+    # 8. Generate answer
+    try:
+        stage_start = time.perf_counter()
 
-    response = chain.invoke({
-        "context": context,
-        "question": question,
-        "role": role
-    })
+        chain = prompt | llm
 
-    return response.content
+        response = chain.invoke({
+            "context": context,
+            "question": question,
+            "role": role
+        })
+
+        logger.info(
+            "Groq answer generated in %.2f seconds",
+            time.perf_counter() - stage_start
+        )
+
+        logger.info("RAG request completed successfully")
+
+        return response.content
+
+    except Exception:
+        logger.exception("Groq answer generation failed")
+        raise
