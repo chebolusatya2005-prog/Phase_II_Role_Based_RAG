@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from supabase import create_client
 from langchain_groq import ChatGroq
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import (
@@ -26,21 +26,14 @@ MATCH_COUNT = 4
 # Load the embedding model only once and reuse it.
 @lru_cache(maxsize=1)
 def get_embeddings():
-    logger.info("Loading HuggingFace embedding model: %s", EMBEDDING_MODEL)
-
+    logger.info("Loading FastEmbed model: %s", EMBEDDING_MODEL)
     start_time = time.perf_counter()
-
-    model = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL
-    )
-
+    model = FastEmbedEmbeddings(model_name=EMBEDDING_MODEL)
     logger.info(
-        "Embedding model loaded in %.2f seconds",
+        "FastEmbed model loaded in %.2f seconds",
         time.perf_counter() - start_time
     )
-
     return model
-
 
 def answer_question(
     question: str,
